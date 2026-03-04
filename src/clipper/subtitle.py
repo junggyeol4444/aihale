@@ -63,9 +63,9 @@ def _build_srt_from_segments(
     segments: List[Dict[str, Any]],
     clip_start: float,
     clip_duration: float,
-) -> list[str]:
+) -> List[str]:
     """Whisper 세그먼트의 실제 타임스탬프로 SRT 블록을 생성한다."""
-    lines: list[str] = []
+    lines: List[str] = []
     clip_end = clip_start + clip_duration
     idx = 1
     for seg in segments:
@@ -93,12 +93,12 @@ def _build_srt_uniform(
     clip_duration: float,
     chars_per_line: int,
     seconds_per_block: float,
-) -> list[str]:
+) -> List[str]:
     """타임스탬프 없이 균일 블록 기반으로 SRT를 생성한다."""
     words = transcript.split()
 
-    blocks: list[str] = []
-    current: list[str] = []
+    blocks: List[str] = []
+    current: List[str] = []
     current_len = 0
     for word in words:
         if current_len + len(word) > chars_per_line and current:
@@ -111,7 +111,7 @@ def _build_srt_uniform(
     if current:
         blocks.append(" ".join(current))
 
-    lines: list[str] = []
+    lines: List[str] = []
     for i, block in enumerate(blocks):
         t_start = i * seconds_per_block
         t_end = min((i + 1) * seconds_per_block, clip_duration)
