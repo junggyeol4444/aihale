@@ -56,6 +56,40 @@ class TestPipelineInit:
         assert p.cfg == cfg
         assert p.analysis_cfg["segment_length"] == 60
 
+    def test_auto_offload_default_false(self):
+        cfg = {"analysis": {}, "output": {}, "gpu": {}}
+        p = Pipeline(cfg)
+        assert p.auto_offload is False
+
+    def test_auto_offload_from_config(self):
+        cfg = {"analysis": {}, "output": {}, "gpu": {"auto_offload": True}}
+        p = Pipeline(cfg)
+        assert p.auto_offload is True
+
+
+class TestPipelineResolveDevice:
+    @patch("src.engine.gpu_manager.vram_usage_gb", return_value=0.0)
+    def test_returns_cuda_when_enough_vram(self, mock_vram):
+        cfg = {"analysis": {}, "output": {}, "gpu": {"device": "cuda", "auto_offload": True, "max_vram_usage": 9.5}}
+        p = Pipeline(cfg)
+        assert p._resolve_device(required_gb=5.0) == "cuda"
+
+    @patch("src.engine.gpu_manager.vram_usage_gb", return_value=8.0)
+    def test_returns_cpu_when_vram_insufficient(self, mock_vram):
+        cfg = {"analysis": {}, "output": {}, "gpu": {"device": "cuda", "auto_offload": True, "max_vram_usage": 9.5}}
+        p = Pipeline(cfg)
+        assert p._resolve_device(required_gb=5.0) == "cpu"
+
+    def test_returns_device_when_offload_disabled(self):
+        cfg = {"analysis": {}, "output": {}, "gpu": {"device": "cuda", "auto_offload": False}}
+        p = Pipeline(cfg)
+        assert p._resolve_device(required_gb=99.0) == "cuda"
+
+    def test_returns_cpu_when_configured(self):
+        cfg = {"analysis": {}, "output": {}, "gpu": {"device": "cpu"}}
+        p = Pipeline(cfg)
+        assert p._resolve_device(required_gb=5.0) == "cpu"
+
 
 class TestPipelineStep6Report:
     def test_report_creates_json(self, tmp_path):

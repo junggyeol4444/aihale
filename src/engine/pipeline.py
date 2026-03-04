@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -33,6 +34,7 @@ class Pipeline:
         self.analysis_cfg = config.get("analysis", {})
         self.output_cfg = config.get("output", {})
         self.gpu_cfg = config.get("gpu", {})
+        self.auto_offload = self.gpu_cfg.get("auto_offload", False)
 
     # ------------------------------------------------------------------
     # Public API
@@ -42,36 +44,84 @@ class Pipeline:
         """파이프라인 전체를 실행하고 클립 정보 목록을 반환한다."""
         input_path = Path(input_path)
         output_dir = Path(output_dir)
+        pipeline_start = time.time()
+        step_times: Dict[str, float] = {}
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
 
             # Step 1: 세그먼트 분할
             logger.info("Step 1: 영상 세그먼트 분할 중…")
+            t0 = time.time()
             segments = self._step1_split(input_path)
-            logger.info("총 %d개 세그먼트 생성", len(segments))
+            step_times["step1_split"] = time.time() - t0
+            logger.info("총 %d개 세그먼트 생성 (%.1f초)", len(segments), step_times["step1_split"])
 
             # Step 2: 음성 분석
             logger.info("Step 2: 음성 분석 중… (faster-whisper)")
+            t0 = time.time()
             self._step2_audio(input_path, segments, tmp_dir)
+            step_times["step2_audio"] = time.time() - t0
+            logger.info("음성 분석 완료 (%.1f초)", step_times["step2_audio"])
 
             # Step 3: 영상 분석
             logger.info("Step 3: 영상 분석 중… (Qwen2.5-VL)")
+            t0 = time.time()
             self._step3_video(input_path, segments, tmp_dir)
+            step_times["step3_video"] = time.time() - t0
+            logger.info("영상 분석 완료 (%.1f초)", step_times["step3_video"])
 
             # Step 4: 하이라이트 판단
             logger.info("Step 4: 하이라이트 판단 중… (Qwen2.5 LLM)")
+            t0 = time.time()
             self._step4_judge(segments)
+            step_times["step4_judge"] = time.time() - t0
+            logger.info("하이라이트 판단 완료 (%.1f초)", step_times["step4_judge"])
 
             # Step 5: 클립 생성
             logger.info("Step 5: 클립 생성 중… (FFmpeg)")
+            t0 = time.time()
             clips = self._step5_clip(input_path, segments, output_dir)
+            step_times["step5_clip"] = time.time() - t0
+            logger.info("클립 생성 완료 (%.1f초)", step_times["step5_clip"])
 
             # Step 6: 결과 리포트
             logger.info("Step 6: 결과 리포트 생성")
+            t0 = time.time()
             self._step6_report(clips, output_dir)
+            step_times["step6_report"] = time.time() - t0
 
+        total_time = time.time() - pipeline_start
+        logger.info(
+            "파이프라인 완료. 총 소요 시간: %.1f초 (단계별: %s)",
+            total_time,
+            ", ".join(f"{k}={v:.1f}s" for k, v in step_times.items()),
+        )
         return clips
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_device(self, required_gb: float = 0.0) -> str:
+        """GPU 사용 가능 여부를 확인하고 적절한 디바이스를 반환한다.
+
+        auto_offload이 켜져 있고 VRAM이 부족하면 'cpu'를 반환한다.
+        """
+        device = self.gpu_cfg.get("device", "cuda")
+        if device != "cuda":
+            return device
+
+        if self.auto_offload and required_gb > 0:
+            from src.engine.gpu_manager import check_vram_available
+
+            max_vram = self.gpu_cfg.get("max_vram_usage", 9.5)
+            if not check_vram_available(required_gb, max_vram):
+                logger.warning(
+                    "VRAM 부족으로 CPU로 오프로드합니다 (필요: %.1f GB)", required_gb
+                )
+                return "cpu"
+        return device
 
     # ------------------------------------------------------------------
     # Steps
@@ -91,9 +141,10 @@ class Pipeline:
         audio_path = tmp_dir / "audio.wav"
         extract_audio(input_path, audio_path)
 
+        device = self._resolve_device(required_gb=3.0)
         analyzer = AudioAnalyzer(
             model_size=self.cfg.get("models", {}).get("audio_model", "large-v3"),
-            device=self.gpu_cfg.get("device", "cuda"),
+            device=device,
             compute_type=self.cfg.get("models", {}).get("compute_type", "float16"),
             language=self.analysis_cfg.get("language", "ko"),
         )
@@ -103,12 +154,13 @@ class Pipeline:
 
         # 각 세그먼트에 해당 시간대 텍스트 매핑
         for seg in segments:
-            texts = [
-                t["text"]
+            matching = [
+                t
                 for t in transcript_segments
                 if t["start"] < seg.end and t["end"] > seg.start
             ]
-            seg.transcript = " ".join(texts).strip()
+            seg.transcript = " ".join(t["text"] for t in matching).strip()
+            seg.transcript_segments = matching
 
         release_model(analyzer.model)
         analyzer.model = None
@@ -119,11 +171,12 @@ class Pipeline:
         from src.analyzer.video_analyzer import VideoAnalyzer
         from src.engine.gpu_manager import log_vram, release_model
 
+        device = self._resolve_device(required_gb=8.0)
         analyzer = VideoAnalyzer(
             model_name=self.cfg.get("models", {}).get(
                 "video_model", "Qwen/Qwen2.5-VL-7B-Instruct"
             ),
-            device=self.gpu_cfg.get("device", "cuda"),
+            device=device,
         )
         log_vram("video 모델 로드 전")
         analyzer.load()
@@ -145,11 +198,12 @@ class Pipeline:
         from src.analyzer.highlight_judge import HighlightJudge
         from src.engine.gpu_manager import log_vram, release_model
 
+        device = self._resolve_device(required_gb=8.0)
         judge = HighlightJudge(
             model_name=self.cfg.get("models", {}).get(
                 "judge_model", "Qwen/Qwen2.5-7B-Instruct"
             ),
-            device=self.gpu_cfg.get("device", "cuda"),
+            device=device,
         )
         log_vram("judge 모델 로드 전")
         judge.load()
@@ -228,6 +282,9 @@ class Pipeline:
                 index=idx,
                 include_subtitles=include_subtitles,
                 transcript=" ".join(seg.transcript for seg in group),
+                transcript_segments=[
+                    ts for seg in group for ts in seg.transcript_segments
+                ],
             )
 
             if generate_thumbnail:
