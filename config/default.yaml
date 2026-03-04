@@ -1,0 +1,52 @@
+# 모델 설정
+models:
+  video_model: "Qwen/Qwen2.5-VL-7B-Instruct"
+  audio_model: "large-v3"
+  judge_model: "Qwen/Qwen2.5-7B-Instruct"
+  compute_type: "float16"
+
+# 분석 설정
+analysis:
+  segment_length: 30          # 세그먼트 길이(초)
+  frames_per_segment: 6       # 세그먼트당 샘플링 프레임 수
+  highlight_threshold: 60     # 하이라이트 판정 임계값 (0~100)
+  max_clips: 10               # 최대 클립 수
+  merge_gap: 8                # 병합 간격(초)
+  pre_buffer: 5               # 하이라이트 전 버퍼(초)
+  post_buffer: 3              # 하이라이트 후 버퍼(초)
+  language: "ko"              # 음성 인식 언어
+
+# 출력 설정
+output:
+  format: "shorts"            # shorts, tiktok, reel, landscape
+  video_codec: "libx264"
+  audio_codec: "aac"
+  crf: 23
+  include_subtitles: true
+  generate_thumbnail: true
+  generate_compilation: true  # 하이라이트 모음 영상 생성
+
+# 출력 포맷별 해상도
+formats:
+  shorts:
+    width: 1080
+    height: 1920
+    max_duration: 60
+  tiktok:
+    width: 1080
+    height: 1920
+    max_duration: 60
+  reel:
+    width: 1080
+    height: 1920
+    max_duration: 90
+  landscape:
+    width: 1920
+    height: 1080
+    max_duration: 300
+
+# GPU 설정
+gpu:
+  device: "cuda"
+  max_vram_usage: 9.5         # GB, 안전 마진
+  auto_offload: true          # VRAM 부족 시 CPU 오프로드
