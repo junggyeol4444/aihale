@@ -43,6 +43,44 @@ class TestBuildSrt:
         content = srt.read_text(encoding="utf-8")
         assert content == ""
 
+    def test_with_whisper_segments(self, tmp_path):
+        srt = tmp_path / "sub.srt"
+        segments = [
+            {"start": 10.0, "end": 13.0, "text": "안녕하세요"},
+            {"start": 14.0, "end": 17.0, "text": "반갑습니다"},
+        ]
+        build_srt(
+            "안녕하세요 반갑습니다",
+            clip_start=10.0,
+            clip_duration=10.0,
+            output_path=srt,
+            transcript_segments=segments,
+        )
+        content = srt.read_text(encoding="utf-8")
+        assert "안녕하세요" in content
+        assert "반갑습니다" in content
+        # 상대 시간이 올바르게 계산되었는지 확인
+        assert "00:00:00,000" in content  # 첫 블록 시작 (10.0 - 10.0 = 0.0)
+        assert "00:00:04,000" in content  # 둘째 블록 시작 (14.0 - 10.0 = 4.0)
+
+    def test_whisper_segments_out_of_range_filtered(self, tmp_path):
+        srt = tmp_path / "sub.srt"
+        segments = [
+            {"start": 0.0, "end": 3.0, "text": "범위 밖"},
+            {"start": 10.0, "end": 13.0, "text": "범위 안"},
+            {"start": 25.0, "end": 28.0, "text": "범위 밖2"},
+        ]
+        build_srt(
+            "범위 안",
+            clip_start=10.0,
+            clip_duration=10.0,
+            output_path=srt,
+            transcript_segments=segments,
+        )
+        content = srt.read_text(encoding="utf-8")
+        assert "범위 안" in content
+        assert "범위 밖" not in content
+
 
 # ---------------------------------------------------------------------------
 # clip_generator.py 테스트

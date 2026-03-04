@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List
 
 from src.utils.video_utils import get_video_duration, sample_timestamps
 
@@ -19,6 +19,7 @@ class Segment:
     frame_timestamps: List[float] = field(default_factory=list)
     video_description: str = ""
     transcript: str = ""
+    transcript_segments: List[Dict[str, Any]] = field(default_factory=list)
     score: float = 0.0
     is_highlight: bool = False
     reason: str = ""

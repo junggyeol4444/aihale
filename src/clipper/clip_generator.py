@@ -65,6 +65,7 @@ class ClipGenerator:
         index: int,
         include_subtitles: bool = True,
         transcript: str = "",
+        transcript_segments: list[dict] | None = None,
     ) -> Path:
         """단일 클립을 생성하고 출력 파일 경로를 반환한다."""
         duration = min(end - start, self.max_duration)
@@ -84,7 +85,10 @@ class ClipGenerator:
         srt_path: Optional[Path] = None
         if include_subtitles and transcript:
             srt_path = out_path.with_suffix(".srt")
-            build_srt(transcript, start, duration, srt_path)
+            build_srt(
+                transcript, start, duration, srt_path,
+                transcript_segments=transcript_segments,
+            )
             vf += f",subtitles={srt_path}"
 
         _run_ffmpeg(
